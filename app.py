@@ -2,7 +2,6 @@ import os
 import re
 import urllib.parse
 import requests
-
 from flask import Flask, jsonify, request
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
@@ -105,7 +104,7 @@ def extract_player_links(page_url, html):
 def home():
     return jsonify({
         "status": "online",
-        "message": "Movie and Series Search API"
+        "message": "Movie and Series Search API is running!"
     })
 
 
@@ -126,16 +125,44 @@ def search():
             "message": "type must be all, movie or series"
         }), 400
 
-    # اربط هذه الدالة بمصدر بحث عام ومصرح باستخدامه.
-    return jsonify({
-        "status": "query_ready",
-        "title": title,
-        "type": kind,
-        "message": (
-            "يلزم ربط البحث بمصدر بيانات أو API مصرح به "
-            "لإرجاع نتائج فعلية."
-        )
-    })
+    try:
+        # البحث المباشر في موقع QFilm كمثال عملي يدعم الاستخراج التلقائي
+        encoded_title = urllib.parse.quote(title)
+        search_url = f"https://a.qfilm.tv/?s={encoded_title}"
+        
+        response = get_page(search_url)
+        soup = BeautifulSoup(response.text, "html.parser")
+        
+        # العثور على رابط أول نتيجة بحث
+        first_result = soup.select_one("div.result-item a, article a, .item a, .poster a, h3.title a")
+            
+        if not first_result or not first_result.get("href"):
+            return jsonify({
+                "status": "not_found",
+                "message": "لم يتم العثور على نتائج مطابقة لهذا العنوان"
+            }), 404
+
+        movie_page_url = urljoin(search_url, first_result["href"])
+
+        # جلب صفحة الفيلم واستخراج كافة روابط التشغيل الخاصة به تلقائياً
+        movie_response = get_page(movie_page_url)
+        links = extract_player_links(movie_response.url, movie_response.text)
+
+        return jsonify({
+            "status": "success",
+            "title": title,
+            "type": kind,
+            "source_page": movie_response.url,
+            "count": len(links),
+            "links": links
+        })
+
+    except requests.RequestException as error:
+        return jsonify({
+            "status": "error",
+            "message": "تعذر الاتصال بمصدر البحث",
+            "details": str(error)
+        }), 502
 
 
 @app.route("/api/extract", methods=["GET"])
