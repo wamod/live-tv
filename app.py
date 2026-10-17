@@ -48,30 +48,51 @@ def get_fushaar_movie():
 
         raw_href = first_result["href"]
         
-        # تصحيح جذري للرابط لتجنب أي نقص أو أخطاء
+        # تصحيح مسار رابط الفيلم
         if raw_href.startswith("http"):
             movie_page_url = raw_href
         elif raw_href.startswith("//"):
             movie_page_url = "https:" + raw_href
         else:
-            # دمج النطاق الأساسي صراحة مع المسار
             if not raw_href.startswith("/"):
                 raw_href = "/" + raw_href
             movie_page_url = "https://www.fushaar.com" + raw_href
 
+        # فتح صفحة الفيلم
         movie_response = requests.get(movie_page_url, headers=HEADERS, timeout=10)
         movie_soup = BeautifulSoup(movie_response.text, "html.parser")
         
-        embed_iframe = movie_soup.select_one("iframe")
-        video_source = movie_soup.select_one("video source")
-        
         stream_url = ""
-        if embed_iframe and embed_iframe.get("src"):
-            stream_url = embed_iframe["src"]
-        elif video_source and video_source.get("src"):
-            stream_url = video_source["src"]
-            
+
+        # 1. البحث عن إطار العرض (iframe)
+        iframes = movie_soup.find_all("iframe")
+        for iframe in iframes:
+            src = iframe.get("src") or iframe.get("data-src")
+            if src and ("player" in src or "embed" in src or "fushaar" in src or "vidsrc" in src or "autoembed" in src):
+                stream_url = src
+                break
+            elif src and not stream_url:
+                stream_url = src
+
+        # 2. إذا لم يجد iframe، يبحث عن فيديو مباشر (source)
         if not stream_url:
+            video_source = movie_soup.select_one("video source") or movie_soup.select_one("video")
+            if video_source:
+                stream_url = video_source.get("src") or video_source.get("data-src", "")
+
+        # 3. البحث في الروابط المضمنة بداخل خيارات المشغلات (Watch Options/Server Select)
+        if not stream_url:
+            watch_links = movie_soup.select("a[href*='embed'], a[href*='player'], a[href*='watch']")
+            if watch_links:
+                stream_url = watch_links[0].get("href", "")
+
+        # تصحيح رابط السيرفر المجلوب
+        if stream_url:
+            if stream_url.startswith("//"):
+                stream_url = "https:" + stream_url
+            elif stream_url.startswith("/"):
+                stream_url = "https://www.fushaar.com" + stream_url
+        else:
             stream_url = movie_page_url
 
         return jsonify({
