@@ -22,8 +22,8 @@ def home():
         "message": "Movie Scraper API is running successfully!"
     })
 
-@app.route("/api/ahwak", methods=["GET"])
-def get_ahwak_movie():
+@app.route("/api/qfilm", methods=["GET"])
+def get_qfilm_movie():
     movie_title = request.args.get("title")
     
     if not movie_title:
@@ -31,7 +31,7 @@ def get_ahwak_movie():
 
     try:
         encoded_title = urllib.parse.quote(movie_title)
-        search_url = f"https://yam.ahwaktv.net/?s={encoded_title}"
+        search_url = f"https://a.qfilm.tv/?s={encoded_title}"
         
         response = requests.get(search_url, headers=HEADERS, timeout=10)
         
@@ -40,11 +40,11 @@ def get_ahwak_movie():
 
         soup = BeautifulSoup(response.text, "html.parser")
         
-        # البحث عن أول نتيجة في الموقع الجديد
-        first_result = soup.select_one("div.post-item a, article a, .item a, .poster a, .post a")
+        # البحث عن نتائج البحث في QFilm
+        first_result = soup.select_one("div.result-item a, article a, .item a, .poster a, .post a, h3.title a")
             
         if not first_result or not first_result.get("href"):
-            return jsonify({"status": "not_found", "message": "Movie not found on AhwakTV"}), 404
+            return jsonify({"status": "not_found", "message": "Movie not found on QFilm"}), 404
 
         raw_href = first_result["href"]
         
@@ -55,9 +55,9 @@ def get_ahwak_movie():
         else:
             if not raw_href.startswith("/"):
                 raw_href = "/" + raw_href
-            movie_page_url = "https://yam.ahwaktv.net" + raw_href
+            movie_page_url = "https://a.qfilm.tv" + raw_href
 
-        # فتح صفحة الفيلم/المسلسل
+        # فتح صفحة الفيلم على QFilm
         movie_response = requests.get(movie_page_url, headers=HEADERS, timeout=10)
         movie_html = movie_response.text
         movie_soup = BeautifulSoup(movie_html, "html.parser")
@@ -81,7 +81,7 @@ def get_ahwak_movie():
 
         # 3. البحث بالـ Regex داخل السكربتات
         if not stream_url:
-            found_embeds = re.findall(r'https?://[^\s\'"]+(?:embed|player|vidsrc|stream)[^\s\'"]*', movie_html)
+            found_embeds = re.findall(r'https?://[^\s\'"]+(?:embed|player|vidsrc|stream|video)[^\s\'"]*', movie_html)
             if found_embeds:
                 stream_url = found_embeds[0]
 
@@ -90,7 +90,7 @@ def get_ahwak_movie():
             if stream_url.startswith("//"):
                 stream_url = "https:" + stream_url
             elif stream_url.startswith("/"):
-                stream_url = "https://yam.ahwaktv.net" + stream_url
+                stream_url = "https://a.qfilm.tv" + stream_url
         else:
             stream_url = movie_page_url
 
