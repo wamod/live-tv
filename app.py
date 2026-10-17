@@ -1,35 +1,27 @@
 import os
 import re
 import urllib.parse
-import requests
+import cloudscraper
 from flask import Flask, jsonify, request
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 
 app = Flask(__name__)
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-    "Accept-Language": "ar,en-US;q=0.9,en;q=0.8",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1"
-}
+# إنشاء كاشط ذكي يتجاوز حماية Cloudflare وربوتات الحماية
+scraper = cloudscraper.create_scraper(
+    browser={
+        'browser': 'chrome',
+        'platform': 'android',
+        'desktop': False
+    }
+)
 
-TIMEOUT = 15
+TIMEOUT = 20
 
 
 def get_page(url):
-    response = requests.get(
-        url,
-        headers=HEADERS,
-        timeout=TIMEOUT
-    )
+    response = scraper.get(url, timeout=TIMEOUT)
     response.raise_for_status()
     return response
 
@@ -109,7 +101,7 @@ def extract_player_links(page_url, html):
 def home():
     return jsonify({
         "status": "online",
-        "message": "Movie and Series Search API is running!"
+        "message": "Movie and Series Search API (Cloudflare Bypassed) is running!"
     })
 
 
@@ -159,12 +151,12 @@ def search():
             "links": links
         })
 
-    except requests.RequestException as error:
+    except Exception as error:
         return jsonify({
             "status": "error",
-            "message": "تعذر الاتصال بمصدر البحث",
+            "message": "تعذر الاتصال بمصدر البحث أو تجاوز الحماية",
             "details": str(error)
-        }), 502
+        }, 502)
 
 
 @app.route("/api/extract", methods=["GET"])
@@ -199,12 +191,12 @@ def extract():
             "links": links
         })
 
-    except requests.RequestException as error:
+    except Exception as error:
         return jsonify({
             "status": "error",
             "message": "تعذر جلب الصفحة",
             "details": str(error)
-        }), 502
+        }, 502)
 
 
 if __name__ == "__main__":
