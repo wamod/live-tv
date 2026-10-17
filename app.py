@@ -1,4 +1,5 @@
 import os
+import re
 import urllib.parse
 import requests
 from bs4 import BeautifulSoup
@@ -39,9 +40,7 @@ def get_fushaar_movie():
 
         soup = BeautifulSoup(response.text, "html.parser")
         
-        first_result = soup.select_one("article.poster a")
-        if not first_result:
-            first_result = soup.select_one(".poster a")
+        first_result = soup.select_one("article.poster a") or soup.select_one(".poster a")
             
         if not first_result or not first_result.get("href"):
             return jsonify({"status": "not_found", "message": "Movie not found on Fushaar"}), 404
@@ -60,33 +59,37 @@ def get_fushaar_movie():
 
         # فتح صفحة الفيلم
         movie_response = requests.get(movie_page_url, headers=HEADERS, timeout=10)
-        movie_soup = BeautifulSoup(movie_response.text, "html.parser")
+        movie_html = movie_response.text
+        movie_soup = BeautifulSoup(movie_html, "html.parser")
         
         stream_url = ""
 
-        # 1. البحث عن إطار العرض (iframe)
-        iframes = movie_soup.find_all("iframe")
-        for iframe in iframes:
-            src = iframe.get("src") or iframe.get("data-src")
-            if src and ("player" in src or "embed" in src or "fushaar" in src or "vidsrc" in src or "autoembed" in src):
+        # 1. البحث في عناصر iframe بالصفحة
+        for iframe in movie_soup.find_all("iframe"):
+            src = iframe.get("src") or iframe.get("data-src") or iframe.get("data-lazy-src")
+            if src and not src.startswith("about:blank") and "facebook" not in src and "twitter" not in src:
                 stream_url = src
                 break
-            elif src and not stream_url:
-                stream_url = src
 
-        # 2. إذا لم يجد iframe، يبحث عن فيديو مباشر (source)
+        # 2. البحث داخل روابط التشغيل (Watch/Embed)
         if not stream_url:
-            video_source = movie_soup.select_one("video source") or movie_soup.select_one("video")
-            if video_source:
-                stream_url = video_source.get("src") or video_source.get("data-src", "")
+            for a in movie_soup.select("a[href*='embed'], a[href*='player'], a[href*='vidsrc'], a[data-url]"):
+                href = a.get("href") or a.get("data-url")
+                if href and href != "#":
+                    stream_url = href
+                    break
 
-        # 3. البحث في الروابط المضمنة بداخل خيارات المشغلات (Watch Options/Server Select)
+        # 3. البحث باستخدام الـ Regex عن أطُر المشغلات أو روابط m3u8/mp4 داخل كود السكربتات
         if not stream_url:
-            watch_links = movie_soup.select("a[href*='embed'], a[href*='player'], a[href*='watch']")
-            if watch_links:
-                stream_url = watch_links[0].get("href", "")
+            found_urls = re.findall(r'https?://[^\s\'"]+\.(?:m3u8|mp4)', movie_html)
+            if found_urls:
+                stream_url = found_urls[0]
+            else:
+                found_embeds = re.findall(r'https?://[^\s\'"]+(?:embed|player|vidsrc)[^\s\'"]*', movie_html)
+                if found_embeds:
+                    stream_url = found_embeds[0]
 
-        # تصحيح رابط السيرفر المجلوب
+        # تصحيح الرابط المستخرج النهائي
         if stream_url:
             if stream_url.startswith("//"):
                 stream_url = "https:" + stream_url
