@@ -71,7 +71,7 @@ def get_fushaar_movie():
                 stream_url = src
                 break
 
-        # 2. البحث داخل روابط التشغيل (Watch/Embed)
+        # 2. البحث داخل روابط التشغيل (Watch/Embed/Data-url)
         if not stream_url:
             for a in movie_soup.select("a[href*='embed'], a[href*='player'], a[href*='vidsrc'], a[data-url]"):
                 href = a.get("href") or a.get("data-url")
@@ -79,15 +79,19 @@ def get_fushaar_movie():
                     stream_url = href
                     break
 
-        # 3. البحث باستخدام الـ Regex عن أطُر المشغلات أو روابط m3u8/mp4 داخل كود السكربتات
+        # 3. البحث العميق داخل أكواد JavaScript (Script tags) عن الروابط المخفية
         if not stream_url:
-            found_urls = re.findall(r'https?://[^\s\'"]+\.(?:m3u8|mp4)', movie_html)
-            if found_urls:
-                stream_url = found_urls[0]
-            else:
-                found_embeds = re.findall(r'https?://[^\s\'"]+(?:embed|player|vidsrc)[^\s\'"]*', movie_html)
-                if found_embeds:
-                    stream_url = found_embeds[0]
+            scripts = movie_soup.find_all("script")
+            for script in scripts:
+                if script.string:
+                    # البحث عن أي روابط داخل السكربتات تحتوي على كلمات مفتاحية للمشغلات
+                    matches = re.findall(r'https?://[^\s\'"]+', script.string)
+                    for m in matches:
+                        if any(k in m for k in ['embed', 'player', 'vidsrc', 'stream', 'video', 'watch']):
+                            stream_url = m
+                            break
+                if stream_url:
+                    break
 
         # تصحيح الرابط المستخرج النهائي
         if stream_url:
