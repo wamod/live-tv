@@ -8,7 +8,7 @@ from urllib.parse import urljoin, urlparse
 
 app = Flask(__name__)
 
-# إنشاء كاشط ذكي يتجاوز حماية Cloudflare
+# إنشاء كاشط ذكي لتجاوز حماية Cloudflare للمواقع
 scraper = cloudscraper.create_scraper(
     browser={
         'browser': 'chrome',
@@ -30,7 +30,7 @@ def extract_player_links(page_url, html):
     soup = BeautifulSoup(html, "html.parser")
     links = []
 
-    # استخراج روابط iframe (مشغلات العرض)
+    # استخراج روابط iframe (المشغلات)
     for iframe in soup.find_all("iframe"):
         src = (
             iframe.get("src")
@@ -92,12 +92,12 @@ def extract_player_links(page_url, html):
 def home():
     return jsonify({
         "status": "online",
-        "message": "Cima4U & General Scraper API is running!"
+        "message": "Fushaar & Scraper API is running successfully!"
     })
 
 
-@app.route("/api/cima4u", methods=["GET"])
-def get_cima4u_movie():
+@app.route("/api/fushaar", methods=["GET"])
+def get_fushaar_movie():
     title = request.args.get("title", "").strip()
 
     if not title:
@@ -108,19 +108,18 @@ def get_cima4u_movie():
 
     try:
         encoded_title = urllib.parse.quote(title)
-        # نطاق Cima4U (يمكن تحديث النطاق إذا تغير رابط الموقع الرئيسي)
-        search_url = f"https://www.cima4u.cc/search?q={encoded_title}"
+        search_url = f"https://www.fushaar.com/?s={encoded_title}"
         
         response = get_page(search_url)
         soup = BeautifulSoup(response.text, "html.parser")
         
-        # البحث عن أول نتيجة مطابقة في هيكلة موقع Cima4U
-        first_result = soup.select_one("div.GridItem a, div.Thumb a, .MovieItem a, article a, h3 a")
+        # البحث عن أول نتيجة مطابقة في هيكلة موقع فشار
+        first_result = soup.select_one("article.poster a, .poster a, div.post a, h3 a")
             
         if not first_result or not first_result.get("href"):
             return jsonify({
                 "status": "not_found",
-                "message": "لم يتم العثور على النتائج في Cima4U"
+                "message": "لم يتم العثور على النتائج في موقع فشار"
             }), 404
 
         movie_page_url = urljoin(search_url, first_result["href"])
@@ -140,7 +139,7 @@ def get_cima4u_movie():
     except Exception as error:
         return jsonify({
             "status": "error",
-            "message": "تعذر الاتصال بموقع Cima4U أو جلب البيانات",
+            "message": "تعذر الاتصال بموقع فشار أو جلب البيانات",
             "details": str(error)
         }), 502
 
