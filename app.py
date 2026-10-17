@@ -8,6 +8,7 @@ from urllib.parse import urljoin, urlparse
 
 app = Flask(__name__)
 
+# إنشاء كاشط ذكي لتجاوز حماية المواقع
 scraper = cloudscraper.create_scraper(
     browser={
         'browser': 'chrome',
@@ -18,18 +19,31 @@ scraper = cloudscraper.create_scraper(
 
 TIMEOUT = 20
 
+# قائمة النطاقات الإعلانية وإعادة التوجيه لحظرها نهائياً
+AD_DOMAINS = [
+    "obqj2.com", "google.com", "facebook.com", "twitter.com", 
+    "histats.com", "addthis.com", "doubleclick.net", "googlesyndication.com",
+    "adcash.com", "propellerads.com"
+]
+
+def is_ad_url(url):
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    for ad in AD_DOMAINS:
+        if ad in host:
+            return True
+    return False
 
 def get_page(url):
     response = scraper.get(url, timeout=TIMEOUT)
     response.raise_for_status()
     return response
 
-
 def extract_player_links(page_url, html):
     soup = BeautifulSoup(html, "html.parser")
     links = []
 
-    # 1. استخراج روابط iframe مع استبعاد يوتيوب وفيسبوك
+    # 1. استخراج روابط iframe الحقيقية مع استبعاد الإعلانات
     for iframe in soup.find_all("iframe"):
         src = (
             iframe.get("src")
@@ -41,10 +55,8 @@ def extract_player_links(page_url, html):
             continue
 
         full_url = urljoin(page_url, src)
-        host = urlparse(full_url).hostname or ""
-
-        # استبعاد روابط يوتيوب ومواقع التواصل الاجتماعي لعدم جلب الإعلانات
-        if "youtube" in host or "youtu.be" in host or host.endswith("facebook.com") or host.endswith("twitter.com"):
+        
+        if is_ad_url(full_url):
             continue
 
         links.append({
@@ -52,38 +64,31 @@ def extract_player_links(page_url, html):
             "url": full_url
         })
 
-    # 2. استخراج روابط التشغيل الموجودة في أزرار أو خصائص خوادم العرض (Servers/Watch options)
-    for a in soup.select("a[href*='embed'], a[href*='player'], a[href*='watch'], a[data-url]"):
-        href = a.get("href") or a.get("data-url")
+    # 2. استخراج روابط التشغيل من خيارات السيرفرات (Watch/Servers options)
+    for tag in soup.select("a[href*='embed'], a[href*='player'], a[href*='watch'], a[data-url], div[data-url]"):
+        href = tag.get("href") or tag.get("data-url")
         if href and href != "#":
             full_url = urljoin(page_url, href)
-            host = urlparse(full_url).hostname or ""
-            if "youtube" not in host and "facebook" not in host:
+            if not is_ad_url(full_url):
                 links.append({
                     "type": "embed",
                     "url": full_url
                 })
 
-    # 3. استخراج روابط الفيديو المباشرة (مثل m3u8 أو mp4)
-    for tag in soup.find_all(["video", "source"]):
-        src = tag.get("src") or tag.get("data-src")
-        if src:
-            links.append({
-                "type": "video",
-                "url": urljoin(page_url, src)
-            })
-
+    # 3. البحث عن ملفات الفيديو المباشرة (m3u8 أو mp4)
     for tag in soup.find_all(True):
-        for attr in ("data-url", "data-video", "data-src"):
+        for attr in ("data-url", "data-video", "data-src", "src"):
             value = tag.get(attr)
             if value and isinstance(value, str):
                 if re.search(r"\.(m3u8|mp4|mpd)(?:$|[?#])", value, re.IGNORECASE):
-                    links.append({
-                        "type": "video",
-                        "url": urljoin(page_url, value)
-                    })
+                    full_url = urljoin(page_url, value)
+                    if not is_ad_url(full_url):
+                        links.append({
+                            "type": "video",
+                            "url": full_url
+                        })
 
-    # إزالة التكرار
+    # إزالة الروابط المكررة
     unique = []
     seen = set()
 
@@ -94,14 +99,12 @@ def extract_player_links(page_url, html):
 
     return unique
 
-
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({
         "status": "online",
-        "message": "Fushaar Scraper API is running successfully!"
+        "message": "Ad-Free Movie Scraper API is running!"
     })
-
 
 @app.route("/api/fushaar", methods=["GET"])
 def get_fushaar_movie():
@@ -133,13 +136,6 @@ def get_fushaar_movie():
         movie_response = get_page(movie_page_url)
         links = extract_player_links(movie_response.url, movie_response.text)
 
-        # احتياطي: إذا لم يتم العثور على روابط بسبب حماية المشغل، نرجع رابط الصفحة المصدر ليتعامل معها التطبيق
-        if not links:
-            links.append({
-                "type": "page",
-                "url": movie_page_url
-            })
-
         return jsonify({
             "status": "success",
             "title": title,
@@ -154,7 +150,6 @@ def get_fushaar_movie():
             "message": "تعذر الاتصال بموقع فشار",
             "details": str(error)
         }), 502
-
 
 @app.route("/api/extract", methods=["GET"])
 def extract():
@@ -173,7 +168,6 @@ def extract():
         })
     except Exception as error:
         return jsonify({"status": "error", "message": str(error)}), 502
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
