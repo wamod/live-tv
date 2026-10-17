@@ -8,7 +8,6 @@ from urllib.parse import urljoin, urlparse
 
 app = Flask(__name__)
 
-# إنشاء كاشط ذكي لتجاوز حماية Cloudflare للمواقع
 scraper = cloudscraper.create_scraper(
     browser={
         'browser': 'chrome',
@@ -30,7 +29,7 @@ def extract_player_links(page_url, html):
     soup = BeautifulSoup(html, "html.parser")
     links = []
 
-    # استخراج روابط iframe (المشغلات)
+    # 1. استخراج روابط iframe مع استبعاد يوتيوب وفيسبوك
     for iframe in soup.find_all("iframe"):
         src = (
             iframe.get("src")
@@ -44,7 +43,8 @@ def extract_player_links(page_url, html):
         full_url = urljoin(page_url, src)
         host = urlparse(full_url).hostname or ""
 
-        if host.endswith("facebook.com"):
+        # استبعاد روابط يوتيوب ومواقع التواصل الاجتماعي لعدم جلب الإعلانات
+        if "youtube" in host or "youtu.be" in host or host.endswith("facebook.com") or host.endswith("twitter.com"):
             continue
 
         links.append({
@@ -52,31 +52,38 @@ def extract_player_links(page_url, html):
             "url": full_url
         })
 
-    # استخراج روابط الفيديو المباشرة
+    # 2. استخراج روابط التشغيل الموجودة في أزرار أو خصائص خوادم العرض (Servers/Watch options)
+    for a in soup.select("a[href*='embed'], a[href*='player'], a[href*='watch'], a[data-url]"):
+        href = a.get("href") or a.get("data-url")
+        if href and href != "#":
+            full_url = urljoin(page_url, href)
+            host = urlparse(full_url).hostname or ""
+            if "youtube" not in host and "facebook" not in host:
+                links.append({
+                    "type": "embed",
+                    "url": full_url
+                })
+
+    # 3. استخراج روابط الفيديو المباشرة (مثل m3u8 أو mp4)
     for tag in soup.find_all(["video", "source"]):
         src = tag.get("src") or tag.get("data-src")
-
         if src:
             links.append({
                 "type": "video",
                 "url": urljoin(page_url, src)
             })
 
-    # البحث عن روابط التشغيل في خصائص HTML (مثل m3u8 أو mp4)
     for tag in soup.find_all(True):
-        for attr in ("data-url", "data-video", "data-src", "href"):
+        for attr in ("data-url", "data-video", "data-src"):
             value = tag.get(attr)
+            if value and isinstance(value, str):
+                if re.search(r"\.(m3u8|mp4|mpd)(?:$|[?#])", value, re.IGNORECASE):
+                    links.append({
+                        "type": "video",
+                        "url": urljoin(page_url, value)
+                    })
 
-            if not value or not isinstance(value, str):
-                continue
-
-            if re.search(r"\.(m3u8|mp4|mpd)(?:$|[?#])", value, re.IGNORECASE):
-                links.append({
-                    "type": "video",
-                    "url": urljoin(page_url, value)
-                })
-
-    # إزالة الروابط المكررة
+    # إزالة التكرار
     unique = []
     seen = set()
 
@@ -92,7 +99,7 @@ def extract_player_links(page_url, html):
 def home():
     return jsonify({
         "status": "online",
-        "message": "Fushaar & Scraper API is running successfully!"
+        "message": "Fushaar Scraper API is running successfully!"
     })
 
 
@@ -103,7 +110,7 @@ def get_fushaar_movie():
     if not title:
         return jsonify({
             "status": "error",
-            "message": "المرجو إدخال اسم الفيلم أو المسلسل عبر ?title="
+            "message": "المرجو إدخال اسم الفيلم عبر ?title="
         }), 400
 
     try:
@@ -113,7 +120,6 @@ def get_fushaar_movie():
         response = get_page(search_url)
         soup = BeautifulSoup(response.text, "html.parser")
         
-        # البحث عن أول نتيجة مطابقة في هيكلة موقع فشار
         first_result = soup.select_one("article.poster a, .poster a, div.post a, h3 a")
             
         if not first_result or not first_result.get("href"):
@@ -124,14 +130,20 @@ def get_fushaar_movie():
 
         movie_page_url = urljoin(search_url, first_result["href"])
 
-        # الدخول لصفحة الفيلم وجلب روابط التشغيل تلقائياً
         movie_response = get_page(movie_page_url)
         links = extract_player_links(movie_response.url, movie_response.text)
+
+        # احتياطي: إذا لم يتم العثور على روابط بسبب حماية المشغل، نرجع رابط الصفحة المصدر ليتعامل معها التطبيق
+        if not links:
+            links.append({
+                "type": "page",
+                "url": movie_page_url
+            })
 
         return jsonify({
             "status": "success",
             "title": title,
-            "source_page": movie_response.url,
+            "source_page": movie_page_url,
             "count": len(links),
             "links": links
         })
@@ -139,7 +151,7 @@ def get_fushaar_movie():
     except Exception as error:
         return jsonify({
             "status": "error",
-            "message": "تعذر الاتصال بموقع فشار أو جلب البيانات",
+            "message": "تعذر الاتصال بموقع فشار",
             "details": str(error)
         }), 502
 
@@ -147,14 +159,12 @@ def get_fushaar_movie():
 @app.route("/api/extract", methods=["GET"])
 def extract():
     page_url = request.args.get("url", "").strip()
-
     if not page_url:
         return jsonify({"status": "error", "message": "أرسل الرابط عبر ?url="}), 400
 
     try:
         response = get_page(page_url)
         links = extract_player_links(response.url, response.text)
-
         return jsonify({
             "status": "success",
             "source_page": response.url,
@@ -162,11 +172,7 @@ def extract():
             "links": links
         })
     except Exception as error:
-        return jsonify({
-            "status": "error",
-            "message": "تعذر جلب الصفحة",
-            "details": str(error)
-        }), 502
+        return jsonify({"status": "error", "message": str(error)}), 502
 
 
 if __name__ == "__main__":
