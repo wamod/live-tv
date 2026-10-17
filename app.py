@@ -8,7 +8,7 @@ from urllib.parse import urljoin, urlparse
 
 app = Flask(__name__)
 
-# إنشاء كاشط ذكي يتجاوز حماية Cloudflare وربوتات الحماية
+# إنشاء كاشط ذكي يتجاوز حماية Cloudflare
 scraper = cloudscraper.create_scraper(
     browser={
         'browser': 'chrome',
@@ -30,7 +30,7 @@ def extract_player_links(page_url, html):
     soup = BeautifulSoup(html, "html.parser")
     links = []
 
-    # روابط iframe
+    # استخراج روابط iframe (مشغلات العرض)
     for iframe in soup.find_all("iframe"):
         src = (
             iframe.get("src")
@@ -52,7 +52,7 @@ def extract_player_links(page_url, html):
             "url": full_url
         })
 
-    # روابط الفيديو المباشرة
+    # استخراج روابط الفيديو المباشرة
     for tag in soup.find_all(["video", "source"]):
         src = tag.get("src") or tag.get("data-src")
 
@@ -62,30 +62,21 @@ def extract_player_links(page_url, html):
                 "url": urljoin(page_url, src)
             })
 
-    # روابط التشغيل الموجودة في خصائص HTML
+    # البحث عن روابط التشغيل في خصائص HTML (مثل m3u8 أو mp4)
     for tag in soup.find_all(True):
-        for attr in (
-            "data-url",
-            "data-video",
-            "data-src",
-            "href"
-        ):
+        for attr in ("data-url", "data-video", "data-src", "href"):
             value = tag.get(attr)
 
             if not value or not isinstance(value, str):
                 continue
 
-            if re.search(
-                r"\.(m3u8|mp4|mpd)(?:$|[?#])",
-                value,
-                re.IGNORECASE
-            ):
+            if re.search(r"\.(m3u8|mp4|mpd)(?:$|[?#])", value, re.IGNORECASE):
                 links.append({
                     "type": "video",
                     "url": urljoin(page_url, value)
                 })
 
-    # إزالة التكرار
+    # إزالة الروابط المكررة
     unique = []
     seen = set()
 
@@ -101,51 +92,46 @@ def extract_player_links(page_url, html):
 def home():
     return jsonify({
         "status": "online",
-        "message": "Movie and Series Search API (Cloudflare Bypassed) is running!"
+        "message": "Cima4U & General Scraper API is running!"
     })
 
 
-@app.route("/api/search", methods=["GET"])
-def search():
+@app.route("/api/cima4u", methods=["GET"])
+def get_cima4u_movie():
     title = request.args.get("title", "").strip()
-    kind = request.args.get("type", "all").strip().lower()
 
     if not title:
         return jsonify({
             "status": "error",
-            "message": "اكتب اسم الفيلم أو المسلسل"
-        }), 400
-
-    if kind not in ("all", "movie", "series"):
-        return jsonify({
-            "status": "error",
-            "message": "type must be all, movie or series"
+            "message": "المرجو إدخال اسم الفيلم أو المسلسل عبر ?title="
         }), 400
 
     try:
         encoded_title = urllib.parse.quote(title)
-        search_url = f"https://a.qfilm.tv/?s={encoded_title}"
+        # نطاق Cima4U (يمكن تحديث النطاق إذا تغير رابط الموقع الرئيسي)
+        search_url = f"https://www.cima4u.cc/search?q={encoded_title}"
         
         response = get_page(search_url)
         soup = BeautifulSoup(response.text, "html.parser")
         
-        first_result = soup.select_one("div.result-item a, article a, .item a, .poster a, h3.title a")
+        # البحث عن أول نتيجة مطابقة في هيكلة موقع Cima4U
+        first_result = soup.select_one("div.GridItem a, div.Thumb a, .MovieItem a, article a, h3 a")
             
         if not first_result or not first_result.get("href"):
             return jsonify({
                 "status": "not_found",
-                "message": "لم يتم العثور على نتائج مطابقة لهذا العنوان"
+                "message": "لم يتم العثور على النتائج في Cima4U"
             }), 404
 
         movie_page_url = urljoin(search_url, first_result["href"])
 
+        # الدخول لصفحة الفيلم وجلب روابط التشغيل تلقائياً
         movie_response = get_page(movie_page_url)
         links = extract_player_links(movie_response.url, movie_response.text)
 
         return jsonify({
             "status": "success",
             "title": title,
-            "type": kind,
             "source_page": movie_response.url,
             "count": len(links),
             "links": links
@@ -154,9 +140,9 @@ def search():
     except Exception as error:
         return jsonify({
             "status": "error",
-            "message": "تعذر الاتصال بمصدر البحث أو تجاوز الحماية",
+            "message": "تعذر الاتصال بموقع Cima4U أو جلب البيانات",
             "details": str(error)
-        }, 502)
+        }), 502
 
 
 @app.route("/api/extract", methods=["GET"])
@@ -164,25 +150,11 @@ def extract():
     page_url = request.args.get("url", "").strip()
 
     if not page_url:
-        return jsonify({
-            "status": "error",
-            "message": "أرسل رابط صفحة المحتوى عبر ?url="
-        }), 400
-
-    parsed = urlparse(page_url)
-
-    if parsed.scheme != "https" or not parsed.hostname:
-        return jsonify({
-            "status": "error",
-            "message": "يجب إدخال رابط HTTPS صالح"
-        }), 400
+        return jsonify({"status": "error", "message": "أرسل الرابط عبر ?url="}), 400
 
     try:
         response = get_page(page_url)
-        links = extract_player_links(
-            response.url,
-            response.text
-        )
+        links = extract_player_links(response.url, response.text)
 
         return jsonify({
             "status": "success",
@@ -190,13 +162,12 @@ def extract():
             "count": len(links),
             "links": links
         })
-
     except Exception as error:
         return jsonify({
             "status": "error",
             "message": "تعذر جلب الصفحة",
             "details": str(error)
-        }, 502)
+        }), 502
 
 
 if __name__ == "__main__":
